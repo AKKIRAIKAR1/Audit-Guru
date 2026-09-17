@@ -1,0 +1,82 @@
+name: ledgerlens
+x-app: &app
+  build:
+    context: .
+    args:
+      INSTALL_PADDLE: ${INSTALL_PADDLE:-false}
+  env_file: .env
+  environment: &environment
+    DATABASE_URL: postgresql+psycopg://ocr:${POSTGRES_PASSWORD:-local-postgres-password}@postgres:5432/ocr
+    REDIS_URL: redis://redis:6379/0
+    STORAGE_BACKEND: s3
+    S3_ENDPOINT_URL: http://minio:9000
+    S3_ACCESS_KEY: ${S3_ACCESS_KEY:-local-minio}
+    S3_SECRET_KEY: ${S3_SECRET_KEY:-replace-local-minio-password}
+    S3_BUCKET: invoices
+  restart: unless-stopped
+services:
+  api:
+    <<: *app
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio-init: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  worker:
+    <<: *app
+    command: celery -A app.worker:celery_app worker --loglevel=info --concurrency=2
+    depends_on:
+      api: {condition: service_healthy}
+      redis: {condition: service_healthy}
+  scheduler:
+    <<: *app
+    command: celery -A app.worker:celery_app beat --loglevel=info --schedule=/app/data/celerybeat-schedule
+    depends_on:
+      api: {condition: service_healthy}
+      redis: {condition: service_healthy}
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ocr
+      POSTGRES_USER: ocr
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-postgres-password}
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ocr"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes: ["redis-data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-local-minio}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-replace-local-minio-password}
+    volumes: ["minio-data:/data"]
+    ports: ["127.0.0.1:9001:9001"]
+  minio-init:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    depends_on: [minio]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-local-minio}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-replace-local-minio-password}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'until mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"; do sleep 2; done; mc mb --ignore-existing local/invoices && mc anonymous set none local/invoices'
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

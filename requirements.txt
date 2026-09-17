@@ -1,0 +1,14 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.34,<1
+sqlalchemy>=2.0,<3
+psycopg[binary]>=3.2,<4
+celery[redis]>=5.4,<6
+boto3>=1.36,<2
+pymupdf>=1.25,<2
+opencv-python-headless>=4.11,<5
+pillow>=11,<13
+pytesseract>=0.3.13,<0.4
+python-multipart>=0.0.20,<1
+pydantic-settings>=2.7,<3
+httpx>=0.28,<1
+pytest>=8,<10
